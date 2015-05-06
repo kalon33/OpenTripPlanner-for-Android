@@ -114,7 +114,6 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ArrayAdapter;
-import android.widget.AutoCompleteTextView;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.ImageButton;
@@ -141,6 +140,7 @@ import java.util.TimeZone;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import edu.usf.cutr.opentripplanner.android.AddressFavActivity;
 import edu.usf.cutr.opentripplanner.android.MyActivity;
 import edu.usf.cutr.opentripplanner.android.OTPApp;
 import edu.usf.cutr.opentripplanner.android.R;
@@ -155,9 +155,12 @@ import edu.usf.cutr.opentripplanner.android.listeners.ServerCheckerCompleteListe
 import edu.usf.cutr.opentripplanner.android.listeners.ServerSelectorCompleteListener;
 import edu.usf.cutr.opentripplanner.android.listeners.TripRequestCompleteListener;
 import edu.usf.cutr.opentripplanner.android.maps.CustomUrlTileProvider;
+import edu.usf.cutr.opentripplanner.android.model.AddressModel;
 import edu.usf.cutr.opentripplanner.android.model.OTPBundle;
 import edu.usf.cutr.opentripplanner.android.model.OptimizeSpinnerItem;
 import edu.usf.cutr.opentripplanner.android.model.Server;
+import edu.usf.cutr.opentripplanner.android.sqlite.FavouriteAddressDB;
+import edu.usf.cutr.opentripplanner.android.sqlite.RecentAddressDb;
 import edu.usf.cutr.opentripplanner.android.sqlite.ServersDataSource;
 import edu.usf.cutr.opentripplanner.android.tasks.BikeRentalLoad;
 import edu.usf.cutr.opentripplanner.android.tasks.MetadataRequest;
@@ -166,17 +169,18 @@ import edu.usf.cutr.opentripplanner.android.tasks.RequestTimesForTrips;
 import edu.usf.cutr.opentripplanner.android.tasks.ServerChecker;
 import edu.usf.cutr.opentripplanner.android.tasks.ServerSelector;
 import edu.usf.cutr.opentripplanner.android.tasks.TripRequest;
+import edu.usf.cutr.opentripplanner.android.util.AutoCompleteTextViewFromZero;
 import edu.usf.cutr.opentripplanner.android.util.BikeRentalStationInfo;
 import edu.usf.cutr.opentripplanner.android.util.ConversionUtils;
 import edu.usf.cutr.opentripplanner.android.util.CustomAddress;
 import edu.usf.cutr.opentripplanner.android.util.CustomInfoWindowAdapter;
 import edu.usf.cutr.opentripplanner.android.util.DateTimeDialog;
 import edu.usf.cutr.opentripplanner.android.util.DirectionsGenerator;
+import edu.usf.cutr.opentripplanner.android.util.DrawableOnTouchListener;
 import edu.usf.cutr.opentripplanner.android.util.LocationUtil;
 import edu.usf.cutr.opentripplanner.android.util.PlacesAutoCompleteAdapter;
 import edu.usf.cutr.opentripplanner.android.util.RangeSeekBar;
 import edu.usf.cutr.opentripplanner.android.util.RangeSeekBar.OnRangeSeekBarChangeListener;
-import edu.usf.cutr.opentripplanner.android.util.RightDrawableOnTouchListener;
 import edu.usf.cutr.opentripplanner.android.util.TripInfo;
 
 import static com.google.android.gms.location.LocationServices.API;
@@ -223,6 +227,10 @@ public class MainFragment extends Fragment implements
     private ImageButton mBtnMyLocation;
 
     private ImageButton mBtnHandle;
+
+    private ImageButton mBtnStreetView;
+
+    private OnMapClickListener mStreetViewBtnHider;
 
     private DrawerLayout mDrawerLayout;
 
@@ -274,9 +282,13 @@ public class MainFragment extends Fragment implements
     private Polyline mBoundariesPolyline;
 
 
-    private AutoCompleteTextView mTbStartLocation;
+    private AutoCompleteTextViewFromZero mTbStartLocation;
 
-    private AutoCompleteTextView mTbEndLocation;
+    private AutoCompleteTextViewFromZero mTbEndLocation;
+
+    private boolean mTbStartFavourite;
+
+    private boolean mTbEndFavourite;
 
     private CustomAddress mStartAddress;
 
@@ -361,6 +373,10 @@ public class MainFragment extends Fragment implements
     private GraphMetadata mCustomServerMetadata = null;
 
     private OTPGeocoding mGeoCodingTask;
+
+    private String WidgetStartLocation;
+
+    private String WidgetEndLocation;
 
     @SuppressWarnings("deprecation")
     @TargetApi(Build.VERSION_CODES.JELLY_BEAN)
@@ -468,9 +484,21 @@ public class MainFragment extends Fragment implements
                                 + "elements can be misplaced");
             }
 
-            mTbStartLocation = (AutoCompleteTextView) mainView
-                    .findViewById(R.id.tbStartLocation);
-            mTbEndLocation = (AutoCompleteTextView) mainView.findViewById(R.id.tbEndLocation);
+            mTbStartLocation = (AutoCompleteTextViewFromZero) mainView.findViewById(R.id.tbStartLocation);
+            mTbEndLocation = (AutoCompleteTextViewFromZero) mainView.findViewById(R.id.tbEndLocation);
+
+            if(WidgetStartLocation != null){
+                mTbStartLocation.setText(WidgetStartLocation);
+                WidgetStartLocation = null;
+            }
+
+            if(WidgetEndLocation != null){
+                mTbEndLocation.setText(WidgetEndLocation);
+                WidgetEndLocation = null;
+            }
+
+            mTbStartFavourite = false;
+            mTbEndFavourite = false;
 
             mBtnSwapOriginDestination = (ImageButton) mainView.findViewById(R.id.btnSwapOriginDestination);
             mDdlOptimization = (ListView) mainView
@@ -511,6 +539,14 @@ public class MainFragment extends Fragment implements
 
             mBtnHandle = (ImageButton) mainView.findViewById(R.id.btnHandle);
             mDrawerLayout = (DrawerLayout) mainView.findViewById(R.id.drawerLayout);
+            mBtnStreetView = (ImageButton) mainView.findViewById(R.id.btnStreetView);
+
+            mStreetViewBtnHider = new OnMapClickListener() {
+                @Override
+                public void onMapClick(LatLng latLng) {
+                    showStreetViewBtn(false, null);
+                }
+            };
 
             mTbStartLocation.setImeOptions(EditorInfo.IME_ACTION_NEXT);
             mTbEndLocation.setImeOptions(EditorInfo.IME_ACTION_DONE);
@@ -647,6 +683,7 @@ public class MainFragment extends Fragment implements
                 } else {
                     setMarker(false, latlng, true, true);
                 }
+                showStreetViewBtn(false, null);
                 processRequestTrip();
             }
         };
@@ -661,9 +698,9 @@ public class MainFragment extends Fragment implements
                     CharSequence tvCharSequence = tv.getText();
 
                     if (tvCharSequence != null) {
-                        String text = tvCharSequence.toString();
-
-                        if (!TextUtils.isEmpty(text)) {
+//                        String text = tvCharSequence.toString();
+//
+//                        if (!TextUtils.isEmpty(text)) {
                             if (v.getId() == R.id.tbStartLocation) {
                                 if (!mIsStartLocationGeocodingCompleted) {
                                     mTbStartLocation.showDropDown();
@@ -673,7 +710,7 @@ public class MainFragment extends Fragment implements
                                     mTbEndLocation.showDropDown();
                                 }
                             }
-                        }
+//                        }
                     } else {
                         Log.w(OTPApp.TAG,
                                 "Focus has changed, but was not possible to obtain start/end"
@@ -754,10 +791,13 @@ public class MainFragment extends Fragment implements
                 imm.hideSoftInputFromWindow(mTbStartLocation.getWindowToken(), 0);
 
                 final LatLng latLngFinal = latlng;
-                final CharSequence[] items = {mApplicationContext.getResources()
-                        .getString(R.string.point_type_selector_start_marker_option),
+                final CharSequence[] items = {
                         mApplicationContext.getResources()
-                                .getString(R.string.point_type_selector_end_marker_option)};
+                                .getString(R.string.point_type_selector_start_marker_option),
+                        mApplicationContext.getResources()
+                                .getString(R.string.point_type_selector_end_marker_option),
+                        mApplicationContext.getResources().
+                                getString(R.string.point_type_selector_street_view_option)};
 
                 AlertDialog.Builder builder = new AlertDialog.Builder(
                         MainFragment.this.getActivity());
@@ -766,10 +806,15 @@ public class MainFragment extends Fragment implements
                     public void onClick(DialogInterface dialog, int item) {
                         if (item == 0) {
                             setMarker(true, latLngFinal, true, true);
-                        } else {
+                            processRequestTrip();
+                        } else if (item == 1) {
                             setMarker(false, latLngFinal, true, true);
+                            processRequestTrip();
+                        } else {
+                            Intent streetView = new Intent(android.content.Intent.ACTION_VIEW,
+                                    Uri.parse(String.format(OTPApp.STREET_VIEW_STRING, latLngFinal.latitude, latLngFinal.longitude)));
+                            startActivity(streetView);
                         }
-                        processRequestTrip();
                     }
                 });
                 AlertDialog alert = builder.create();
@@ -812,7 +857,6 @@ public class MainFragment extends Fragment implements
             }
         };
         mMap.setOnInfoWindowClickListener(onInfoWindowClickListener);
-
 
 
         DrawerListener dl = new DrawerListener() {
@@ -858,23 +902,23 @@ public class MainFragment extends Fragment implements
         startLocationPlacesAutoCompleteAdapter = new PlacesAutoCompleteAdapter(getActivity(), android.R.layout.simple_spinner_dropdown_item,
                 mOTPApp.getSelectedServer());
         mTbStartLocation.setAdapter(startLocationPlacesAutoCompleteAdapter);
-        mTbStartLocation.setThreshold(3);
+        mTbStartLocation.setThreshold(0);
 
         endLocationPlacesAutoCompleteAdapter = new PlacesAutoCompleteAdapter(getActivity(), android.R.layout.simple_spinner_dropdown_item,
                 mOTPApp.getSelectedServer());
-        mTbStartLocation.setAdapter(startLocationPlacesAutoCompleteAdapter);
 
         mTbEndLocation.setAdapter(endLocationPlacesAutoCompleteAdapter);
-        mTbEndLocation .setThreshold(3);
+        mTbEndLocation .setThreshold(0);
 
-        OnTouchListener otlStart = new RightDrawableOnTouchListener(mTbStartLocation) {
+        OnTouchListener otlStart = new DrawableOnTouchListener(mTbStartLocation) {
             @Override
-            public boolean onDrawableTouch(final MotionEvent event) {
+            public boolean onRightDrawableTouch(final MotionEvent event) {
 
                 final CharSequence[] items = {
                         getResources().getString(R.string.text_box_dialog_location_type_current_location),
                         getResources().getString(R.string.text_box_dialog_location_type_contact),
-                        getResources().getString(R.string.text_box_dialog_location_type_map_point)};
+                        getResources().getString(R.string.text_box_dialog_location_type_map_point),
+                        getResources().getString(R.string.text_box_dialog_location_type_favourite)};
 
                 AlertDialog.Builder builder = new AlertDialog.Builder(
                         MainFragment.this.getActivity());
@@ -918,7 +962,8 @@ public class MainFragment extends Fragment implements
                                     .startActivityForResult(intent,
                                             OTPApp.CHOOSE_CONTACT_REQUEST_CODE);
 
-                        } else { // Point on Map
+                        } else if (items[item]
+                                .equals(getResources().getString(R.string.text_box_dialog_location_type_map_point))) {
                             if (mStartMarker != null) {
                                 updateMarkerPosition(mStartMarker.getPosition(), true);
                             } else {
@@ -927,6 +972,15 @@ public class MainFragment extends Fragment implements
                                         getResources().getString(R.string.text_box_need_to_place_marker));
                                 mTbStartLocation.requestFocus();
                             }
+                        } else { //Favourite
+                            Intent intent = new Intent(MainFragment.this.getActivity(), AddressFavActivity.class);
+
+                            ((MyActivity) MainFragment.this.getActivity())
+                                    .setButtonStartLocation(true);
+
+                            MainFragment.this.getActivity()
+                                    .startActivityForResult(intent,
+                                            OTPApp.CHOOSE_ADDRESS_REQUEST_CODE);
                         }
                     }
                 });
@@ -935,18 +989,60 @@ public class MainFragment extends Fragment implements
                 return true;
             }
 
+            @Override
+            public boolean onLeftDrawableTouch(MotionEvent event) {
+                if(!mTbStartFavourite){
+                    String text = mTbStartLocation.getText().toString();
+                    boolean temp = mIsStartLocationChangedByUser;
+
+                    if(text.equals("")){
+                        Toast.makeText(MainFragment.this.mApplicationContext,
+                                mApplicationContext.getResources()
+                                        .getString(R.string.toast_address_location_empty),
+                                Toast.LENGTH_LONG).show();
+                        return false;
+                    }
+
+                    mTbStartLocation.setCompoundDrawablesWithIntrinsicBounds(
+                            android.R.drawable.btn_star_big_on, 0, android.R.drawable.ic_input_get, 0);
+                    mTbStartFavourite = true;
+
+                    AddressModel address;
+                    if(temp == false){
+                        address = new AddressModel(mStartAddress.toString(), mStartAddress.getLatitude(), mStartAddress.getLongitude(), mStartAddress.hasLatitude(), mStartAddress.hasLongitude());
+                    }else{
+                        address = new AddressModel(text);
+                    }
+
+                    if(FavouriteAddressDB.getInstance(MainFragment.this.getActivity()).addAddress(address)){
+                        Toast.makeText(MainFragment.this.mApplicationContext,
+                                mApplicationContext.getResources()
+                                        .getString(R.string.toast_address_location_added_favourites),
+                                Toast.LENGTH_LONG).show();
+                    }else{
+                        Toast.makeText(MainFragment.this.mApplicationContext,
+                                mApplicationContext.getResources()
+                                        .getString(R.string.toast_address_location_already_stored),
+                                Toast.LENGTH_LONG).show();
+                    }
+                    return true;
+                }
+                return false;
+            }
+
         };
 
         mTbStartLocation.setOnTouchListener(otlStart);
 
-        OnTouchListener otlEnd = new RightDrawableOnTouchListener(mTbEndLocation) {
+        OnTouchListener otlEnd = new DrawableOnTouchListener(mTbEndLocation) {
             @Override
-            public boolean onDrawableTouch(final MotionEvent event) {
+            public boolean onRightDrawableTouch(final MotionEvent event) {
 
                 final CharSequence[] items = {
                         getResources().getString(R.string.text_box_dialog_location_type_current_location),
                         getResources().getString(R.string.text_box_dialog_location_type_contact),
-                        getResources().getString(R.string.text_box_dialog_location_type_map_point)};
+                        getResources().getString(R.string.text_box_dialog_location_type_map_point),
+                        getResources().getString(R.string.text_box_dialog_location_type_favourite)};
 
                 AlertDialog.Builder builder = new AlertDialog.Builder(
                         MainFragment.this.getActivity());
@@ -992,7 +1088,8 @@ public class MainFragment extends Fragment implements
                                     .startActivityForResult(intent,
                                             OTPApp.CHOOSE_CONTACT_REQUEST_CODE);
 
-                        } else { // Point on Map
+                        } else if (items[item]
+                                .equals(getResources().getString(R.string.text_box_dialog_location_type_map_point))) { // Point on Map
                             if (mEndMarker != null) {
                                 updateMarkerPosition(mEndMarker.getPosition(), false);
                             } else {
@@ -1001,12 +1098,62 @@ public class MainFragment extends Fragment implements
                                         getResources().getString(R.string.text_box_need_to_place_marker));
                                 mTbEndLocation.requestFocus();
                             }
+                        } else { //Favourite
+                            Intent intent = new Intent(MainFragment.this.getActivity(), AddressFavActivity.class);
+
+                            ((MyActivity) MainFragment.this.getActivity())
+                                    .setButtonStartLocation(false);
+
+                            MainFragment.this.getActivity()
+                                    .startActivityForResult(intent,
+                                            OTPApp.CHOOSE_ADDRESS_REQUEST_CODE);
                         }
                     }
                 });
                 AlertDialog alert = builder.create();
                 alert.show();
                 return true;
+            }
+
+            @Override
+            public boolean onLeftDrawableTouch(MotionEvent event) {
+                if(!mTbEndFavourite){
+                    String text = mTbEndLocation.getText().toString();
+                    boolean temp = mIsEndLocationChangedByUser;
+
+                    if(text.equals("")){
+                        Toast.makeText(MainFragment.this.mApplicationContext,
+                                mApplicationContext.getResources()
+                                        .getString(R.string.toast_address_location_empty),
+                                Toast.LENGTH_LONG).show();
+                        return false;
+                    }
+
+                    mTbEndLocation.setCompoundDrawablesWithIntrinsicBounds(
+                            android.R.drawable.btn_star_big_on, 0, android.R.drawable.ic_input_get, 0);
+                    mTbEndFavourite = true;
+
+                    AddressModel address;
+                    if(temp == false){
+                        address = new AddressModel(mEndAddress.toString(), mEndAddress.getLatitude(), mEndAddress.getLongitude(), mEndAddress.hasLatitude(), mEndAddress.hasLongitude());
+                    }else{
+                        address = new AddressModel(text);
+                    }
+                    if(FavouriteAddressDB.getInstance(MainFragment.this.getActivity()).addAddress(address)){
+
+                        Toast.makeText(MainFragment.this.mApplicationContext,
+                                mApplicationContext.getResources()
+                                        .getString(R.string.toast_address_location_added_favourites),
+                                Toast.LENGTH_LONG).show();
+                    }else{
+                        Toast.makeText(MainFragment.this.mApplicationContext,
+                                mApplicationContext.getResources()
+                                        .getString(R.string.toast_address_location_already_stored),
+                                Toast.LENGTH_LONG).show();
+                    }
+                    return true;
+                }
+                return false;
             }
 
         };
@@ -1048,6 +1195,11 @@ public class MainFragment extends Fragment implements
                         mIsStartLocationChangedByUser = true;
                     }
                 }
+                if(mTbStartFavourite){
+                    mTbStartLocation.setCompoundDrawablesWithIntrinsicBounds(
+                            android.R.drawable.btn_star_big_off, 0, android.R.drawable.ic_input_get, 0);
+                    mTbStartFavourite = false;
+                }
             }
         };
 
@@ -1073,6 +1225,11 @@ public class MainFragment extends Fragment implements
                     } else {
                         mIsEndLocationChangedByUser = true;
                     }
+                }
+                if(mTbEndFavourite){
+                    mTbEndLocation.setCompoundDrawablesWithIntrinsicBounds(
+                            android.R.drawable.btn_star_big_off, 0, android.R.drawable.ic_input_get, 0);
+                    mTbEndFavourite = false;
                 }
             }
         };
@@ -1876,6 +2033,10 @@ public class MainFragment extends Fragment implements
         imm.hideSoftInputFromWindow(mTbEndLocation.getWindowToken(), 0);
         imm.hideSoftInputFromWindow(mTbStartLocation.getWindowToken(), 0);
 
+        //add start and end location to recent database
+        RecentAddressDb.getInstance(MainFragment.this.getActivity()).addNewCustom(mStartAddress);
+        RecentAddressDb.getInstance(MainFragment.this.getActivity()).addNewCustom(mEndAddress);
+
         mTripDate = null;
     }
 
@@ -2055,12 +2216,12 @@ public class MainFragment extends Fragment implements
             if (isStartTextbox) {
                 mTbStartLocation.clearFocus();
                 if (!mTbEndLocation.hasFocus()){
-                    mMap.setOnMapClickListener(null);
+                    mMap.setOnMapClickListener(mStreetViewBtnHider);
                 }
             } else {
                 mTbEndLocation.clearFocus();
                 if (!mTbStartLocation.hasFocus()){
-                    mMap.setOnMapClickListener(null);
+                    mMap.setOnMapClickListener(mStreetViewBtnHider);
                 }
             }
         }
@@ -2603,6 +2764,19 @@ public class MainFragment extends Fragment implements
         super.onResume();
 
         listenForBikeUpdates(mIsAlarmBikeRentalUpdateActive);
+        if(mTbEndLocation != null){
+            if(WidgetEndLocation != null){
+                mTbEndLocation.setText(WidgetEndLocation);
+                WidgetEndLocation = null;
+            }
+        }
+
+        if(mTbStartLocation != null){
+            if(WidgetStartLocation != null){
+                mTbStartLocation.setText(WidgetStartLocation);
+                WidgetStartLocation = null;
+            }
+        }
 
         Log.d(OTPApp.TAG, "MainFragment onResume");
     }
@@ -2980,6 +3154,51 @@ public class MainFragment extends Fragment implements
     }
 
     /**
+     * Turns on start/end star when text taken from favourite database.
+     *
+     * @param isStartTextBox if true start box will be used
+     */
+    public void setStar(boolean isStartTextBox) {
+        if (isStartTextBox) {
+            mTbStartLocation.setCompoundDrawablesWithIntrinsicBounds(
+                    android.R.drawable.btn_star_big_on, 0, android.R.drawable.ic_input_get, 0);
+            mTbStartFavourite = true;
+
+        } else {
+            mTbEndLocation.setCompoundDrawablesWithIntrinsicBounds(
+                    android.R.drawable.btn_star_big_on, 0, android.R.drawable.ic_input_get, 0);
+            mTbEndFavourite = true;
+        }
+    }
+
+    /**
+     * Refreshes start/end star when user gets back from favourite address
+     *
+     * @param isStartTextBox if true start box will be used
+     */
+    public void refreshStar(boolean isStartTextBox) {
+        if (isStartTextBox) {
+            if (mTbStartFavourite){
+                if(!FavouriteAddressDB.getInstance(MainFragment.this.getActivity()).isAddressStored(new AddressModel(mStartAddress.toString()))){
+                    mTbStartLocation.setCompoundDrawablesWithIntrinsicBounds(
+                            android.R.drawable.btn_star_big_off, 0, android.R.drawable.ic_input_get, 0);
+                    mTbStartFavourite = false;
+                }
+
+            }
+        } else {
+            if (mTbEndFavourite){
+                if(!FavouriteAddressDB.getInstance(MainFragment.this.getActivity()).isAddressStored(new AddressModel(mEndAddress.toString()))){
+                    mTbEndLocation.setCompoundDrawablesWithIntrinsicBounds(
+                            android.R.drawable.btn_star_big_off, 0, android.R.drawable.ic_input_get, 0);
+                    mTbEndFavourite = false;
+                }
+
+            }
+        }
+    }
+
+    /**
      * Returns address in string format.
      * <p>
      * Lines used are first and second.
@@ -3078,6 +3297,7 @@ public class MainFragment extends Fragment implements
                 }
             }
             mCustomInfoWindowAdapter.setMarkers(mModeMarkers);
+            mCustomInfoWindowAdapter.setMainFragment(this);
             mMap.setInfoWindowAdapter(mCustomInfoWindowAdapter);
             if (animateCamera == 1){
                 if (firstTransitMarker != null){
@@ -3092,6 +3312,22 @@ public class MainFragment extends Fragment implements
                     showRouteOnMapAnimateCamera(routeBounds, firstTransitMarker, animateCamera);
                 }
             }
+        }
+    }
+
+    public void showStreetViewBtn(boolean show, final LatLng latLng){
+        if(show){
+            mBtnStreetView.setOnClickListener(new OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    Intent streetView = new Intent(android.content.Intent.ACTION_VIEW,
+                            Uri.parse(String.format(OTPApp.STREET_VIEW_STRING, latLng.latitude, latLng.longitude)));
+                    startActivity(streetView);
+                }
+            });
+            mBtnStreetView.setVisibility(View.VISIBLE);
+        }else{
+            mBtnStreetView.setVisibility(View.INVISIBLE);
         }
     }
 
@@ -4361,5 +4597,13 @@ public class MainFragment extends Fragment implements
 
     public void setmCustomServerMetadata(GraphMetadata mCustomServerMetadata) {
         this.mCustomServerMetadata = mCustomServerMetadata;
+    }
+
+    public void setWidgetLocation(String location, boolean isStartLocation){
+        if(isStartLocation){
+            WidgetStartLocation = location;
+        }else{
+            WidgetEndLocation = location;
+        }
     }
 }
