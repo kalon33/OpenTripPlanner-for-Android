@@ -86,6 +86,7 @@ import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentTransaction;
 import android.support.v4.app.NotificationCompat;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v4.widget.DrawerLayout.DrawerListener;
 import android.text.Editable;
@@ -164,6 +165,7 @@ import edu.usf.cutr.opentripplanner.android.sqlite.RecentAddressDb;
 import edu.usf.cutr.opentripplanner.android.sqlite.ServersDataSource;
 import edu.usf.cutr.opentripplanner.android.tasks.BikeRentalLoad;
 import edu.usf.cutr.opentripplanner.android.tasks.MetadataRequest;
+import edu.usf.cutr.opentripplanner.android.tasks.MetadataRequest.MetadataRequestReceiver;
 import edu.usf.cutr.opentripplanner.android.tasks.OTPGeocoding;
 import edu.usf.cutr.opentripplanner.android.tasks.RequestTimesForTrips;
 import edu.usf.cutr.opentripplanner.android.tasks.ServerChecker;
@@ -200,6 +202,8 @@ public class MainFragment extends Fragment implements
         GoogleApiClient.OnConnectionFailedListener,
         GoogleApiClient.ConnectionCallbacks,
         GoogleMap.OnCameraChangeListener {
+
+    public static final String METADATA_FILTER = "MainFragment_metadatRequestReceiver";
 
     private static LocationManager sLocationManager;
 
@@ -374,6 +378,8 @@ public class MainFragment extends Fragment implements
 
     private OTPGeocoding mGeoCodingTask;
 
+    private MetadataRequestReceiver mMetadatRequestReceiver;
+
     private String WidgetStartLocation;
 
     private String WidgetEndLocation;
@@ -413,6 +419,17 @@ public class MainFragment extends Fragment implements
         } catch (ClassCastException e) {
             throw new ClassCastException(activity.toString()
                     + " must implement OtpFragment");
+        }
+        mMetadatRequestReceiver = new MetadataRequestReceiver(activity, activity.getApplicationContext(), this);
+        LocalBroadcastManager.getInstance(activity)
+            .registerReceiver(mMetadatRequestReceiver, new IntentFilter(METADATA_FILTER));
+    }
+
+    @Override
+    public void onDetach() {
+        super.onDetach();
+        if (mMetadatRequestReceiver != null) {
+            LocalBroadcastManager.getInstance(getActivity()).unregisterReceiver(mMetadatRequestReceiver);
         }
     }
 
@@ -2829,9 +2846,11 @@ public class MainFragment extends Fragment implements
                 WeakReference<Activity> weakContext = new WeakReference<Activity>(getActivity());
 
                 if (mCustomServerMetadata == null){
-                    MetadataRequest metaRequest = new MetadataRequest(weakContext, mApplicationContext,
-                            this);
-                    metaRequest.execute(mPrefs.getString(OTPApp.PREFERENCE_KEY_CUSTOM_SERVER_URL, ""));
+                    Intent metaRequest = new Intent(getActivity(), MetadataRequest.class);
+                    mMetadatRequestReceiver.showProgressDialog();
+                    metaRequest.putExtra("reqs", mPrefs.getString(OTPApp.PREFERENCE_KEY_CUSTOM_SERVER_URL, ""));
+                    metaRequest.putExtra("FILTER", METADATA_FILTER);
+                    getActivity().startService(metaRequest);
                 }
                 else{
                     onMetadataRequestComplete(mCustomServerMetadata, false);
