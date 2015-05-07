@@ -167,6 +167,7 @@ import edu.usf.cutr.opentripplanner.android.tasks.BikeRentalLoad;
 import edu.usf.cutr.opentripplanner.android.tasks.MetadataRequest;
 import edu.usf.cutr.opentripplanner.android.tasks.MetadataRequest.MetadataRequestReceiver;
 import edu.usf.cutr.opentripplanner.android.tasks.OTPGeocoding;
+import edu.usf.cutr.opentripplanner.android.tasks.OTPGeocoding.OTPGeocodingReceiver;
 import edu.usf.cutr.opentripplanner.android.tasks.RequestTimesForTrips;
 import edu.usf.cutr.opentripplanner.android.tasks.ServerChecker;
 import edu.usf.cutr.opentripplanner.android.tasks.ServerSelector;
@@ -204,6 +205,7 @@ public class MainFragment extends Fragment implements
         GoogleMap.OnCameraChangeListener {
 
     public static final String METADATA_FILTER = "MainFragment_metadatRequestReceiver";
+    public static final String OTPGEOCODING_FILTER = "MainFragment_otpGeocodingReceiver";
 
     private static LocationManager sLocationManager;
 
@@ -376,9 +378,9 @@ public class MainFragment extends Fragment implements
 
     private GraphMetadata mCustomServerMetadata = null;
 
-    private OTPGeocoding mGeoCodingTask;
-
     private MetadataRequestReceiver mMetadatRequestReceiver;
+
+    private OTPGeocodingReceiver mOtpGeocodingReceiver;
 
     private String WidgetStartLocation;
 
@@ -430,6 +432,9 @@ public class MainFragment extends Fragment implements
         super.onDetach();
         if (mMetadatRequestReceiver != null) {
             LocalBroadcastManager.getInstance(getActivity()).unregisterReceiver(mMetadatRequestReceiver);
+        }
+        if (mOtpGeocodingReceiver != null) {
+            LocalBroadcastManager.getInstance(getActivity()).unregisterReceiver(mOtpGeocodingReceiver);
         }
     }
 
@@ -2730,24 +2735,28 @@ public class MainFragment extends Fragment implements
      */
     public void processAddress(final boolean isStartTextBox, String address, Double originalLat,
                                Double originalLon, boolean geocodingForMarker) {
-        WeakReference<Activity> weakContext = new WeakReference<Activity>(getActivity());
 
-        mGeoCodingTask = new OTPGeocoding(weakContext, mApplicationContext,
-                isStartTextBox, geocodingForMarker, mOTPApp.getSelectedServer(), this);
+        mOtpGeocodingReceiver = new OTPGeocodingReceiver(isStartTextBox, geocodingForMarker, this);
+        LocalBroadcastManager.getInstance(getActivity()).registerReceiver(mOtpGeocodingReceiver,
+                new IntentFilter(OTPGEOCODING_FILTER));
         LatLng mCurrentLatLng = getLastLocation();
 
         if (address.equalsIgnoreCase(this.getResources().getString(R.string.text_box_my_location))) {
             if (mCurrentLatLng != null) {
                 if (isStartTextBox){
                     mIsStartLocationGeocodingCompleted = false;
-                    mGeoCodingTask.execute(address, String.valueOf(mCurrentLatLng.latitude),
-                            String.valueOf(mCurrentLatLng.longitude));
                 }
                 else{
                     mIsEndLocationGeocodingCompleted = false;
-                    mGeoCodingTask.execute(address, String.valueOf(mCurrentLatLng.latitude),
-                            String.valueOf(mCurrentLatLng.longitude));
                 }
+                Intent optGeocoding = new Intent(getActivity(), OTPGeocoding.class);
+                String[] params = { address, String.valueOf(mCurrentLatLng.latitude),
+                        String.valueOf(mCurrentLatLng.longitude) };
+                optGeocoding.putExtra("params", params);
+                optGeocoding.putExtra("selectedServer", mOTPApp.getSelectedServer());
+                optGeocoding.putExtra("geocodingForMarker", geocodingForMarker);
+                optGeocoding.putExtra("FILTER", OTPGEOCODING_FILTER);
+                getActivity().startService(optGeocoding);
             } else {
                 Toast.makeText(mApplicationContext,
                         mApplicationContext.getResources()
@@ -2766,12 +2775,17 @@ public class MainFragment extends Fragment implements
             }
             if (isStartTextBox){
                 mIsStartLocationGeocodingCompleted = false;
-                mGeoCodingTask.execute(address, latString, lonString);
             }
             else{
                 mIsEndLocationGeocodingCompleted = false;
-                mGeoCodingTask.execute(address, latString, lonString);
             }
+            Intent optGeocoding = new Intent(getActivity(), OTPGeocoding.class);
+            String[] params = { address, latString, lonString };
+            optGeocoding.putExtra("params", params);
+            optGeocoding.putExtra("selectedServer", mOTPApp.getSelectedServer());
+            optGeocoding.putExtra("geocodingForMarker", geocodingForMarker);
+            optGeocoding.putExtra("FILTER", OTPGEOCODING_FILTER);
+            getActivity().startService(optGeocoding);
         }
     }
 
